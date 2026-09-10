@@ -1,6 +1,13 @@
 /* ================================================================
    JT ATTENDANCE PORTAL — script.js
-   Jesus Tribe Abuja — v2.3
+   Jesus Tribe Abuja — v2.4
+   Changes from v2.3:
+   - Premium boot overlay with animated progress during initial
+     Apps Script cold-start fetch (~5–10s).
+   - Skeleton loaders for member grid, log list, and analytics
+     charts on subsequent refreshes.
+   - 20s hard cap so a dead server never traps the user.
+
    Changes from v2.2:
    - Backend URL is now HARDCODED (see CONFIG.WEB_APP_URL).
      The Settings screen no longer allows the user to change it.
@@ -57,6 +64,127 @@ const STATE = {
 /* ── 3. DOM HELPERS ────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
 const $$ = sel => document.querySelectorAll(sel);
+
+/* ── 3b. BOOT LOADER & SKELETON HELPERS ───────────────────── */
+const BOOT = {
+  tasks: 0,
+  done: 0,
+  startedAt: 0,
+  hidden: true,
+  warmingTimer: null,
+  minVisibleMs: 900,    // hold overlay briefly even on warm loads — avoids flicker
+  maxWaitMs: 20000,     // hard cap — never trap the user on a dead server
+};
+
+function bootStart() {
+  BOOT.tasks = 0;
+  BOOT.done  = 0;
+  BOOT.hidden = false;
+  BOOT.startedAt = Date.now();
+
+  const overlay = $('bootOverlay');
+  if (!overlay) return;
+
+  overlay.classList.remove('hidden', 'fading');
+
+  const status = $('bootStatus');
+  if (status) {
+    status.textContent = 'Connecting to server…';
+    status.classList.remove('warming');
+  }
+  const bar = $('bootProgressBar');
+  if (bar) bar.style.width = '6%';
+
+  clearTimeout(BOOT.warmingTimer);
+  BOOT.warmingTimer = setTimeout(() => {
+    if (BOOT.hidden) return;
+    if (status) { status.textContent = 'Waking up the server…'; status.classList.add('warming'); }
+  }, 3000);
+
+  setTimeout(() => {
+    if (BOOT.hidden) return;
+    if (status) status.textContent = 'Almost there…';
+  }, 6500);
+
+  setTimeout(() => { if (!BOOT.hidden) bootFinish(true); }, BOOT.maxWaitMs);
+}
+
+function bootRegister() { BOOT.tasks++; }
+
+function bootComplete() {
+  BOOT.done++;
+  const pct = BOOT.tasks
+    ? Math.min(95, Math.round((BOOT.done / BOOT.tasks) * 100))
+    : 0;
+  const bar = $('bootProgressBar');
+  if (bar) bar.style.width = pct + '%';
+  if (BOOT.done >= BOOT.tasks && !BOOT.hidden) bootFinish(false);
+}
+
+function bootFinish(forced) {
+  if (BOOT.hidden) return;
+  BOOT.hidden = true;
+  clearTimeout(BOOT.warmingTimer);
+
+  const bar = $('bootProgressBar');
+  if (bar) bar.style.width = '100%';
+
+  const elapsed = Date.now() - BOOT.startedAt;
+  const hold    = Math.max(0, BOOT.minVisibleMs - elapsed) + 300;
+
+  setTimeout(() => {
+    const overlay = $('bootOverlay');
+    if (!overlay) return;
+    overlay.classList.add('fading');
+    setTimeout(() => overlay.classList.add('hidden'), 450);
+  }, hold);
+}
+
+function skeletonMemberCards(n = 6) {
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    html += `<div class="skel-member-card">
+      <div class="skel skel-circle skel-member-avatar"></div>
+      <div class="skel skel-line skel-member-name"></div>
+      <div class="skel skel-line skel-member-sub"></div>
+    </div>`;
+  }
+  return html;
+}
+
+function skeletonLogItems(n = 5) {
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    html += `<div class="skel-log-item">
+      <div class="skel skel-circle skel-log-avatar"></div>
+      <div class="skel-log-body">
+        <div class="skel skel-line skel-log-name"></div>
+        <div class="skel skel-line skel-log-sub"></div>
+      </div>
+      <div class="skel skel-log-badge"></div>
+    </div>`;
+  }
+  return html;
+}
+
+function skeletonLeaderboard(n = 5) {
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    html += `<div class="lb-item" style="opacity:0.55">
+      <div class="skel" style="width:16px;height:14px;border-radius:4px;"></div>
+      <div class="skel skel-line" style="flex:1;height:10px;"></div>
+      <div class="skel" style="width:60px;height:4px;border-radius:2px;"></div>
+      <div class="skel" style="width:24px;height:10px;"></div>
+    </div>`;
+  }
+  return html;
+}
+
+function setChartLoading(on) {
+  document.querySelectorAll('#pageAnalytics .chart-wrap').forEach(el => {
+    el.classList.toggle('loading', on);
+  });
+}
 
 /* ── 4. PIN SYSTEM ─────────────────────────────────────────── */
 (function initPIN() {
@@ -190,9 +318,13 @@ function initApp() {
   setupAnalyticsEvents();
   setupReportsEvents();
   setupSettingsEvents();
-  loadMembersCache();
-  loadTodayLog();
-  loadTodayOfferings();
+
+  // Boot overlay: tracks the three initial parallel fetches.
+  bootStart();
+  bootRegister(); loadMembersCache().finally(bootComplete);
+  bootRegister(); loadTodayLog().finally(bootComplete);
+  bootRegister(); loadTodayOfferings().finally(bootComplete);
+
   startOfflineSyncLoop();
   updateSyncBadge();
   renderCounters();
@@ -268,7 +400,8 @@ function injectPrintStyles() {
     body { background: #fff !important; color: #000 !important; }
     .app-header, .counter-strip, .tab-bar, .undo-bar,
     .toast-container, #pinOverlay, .btn-primary, .btn-secondary,
-    .btn-danger, .report-filters, #generateReportBtn { display: none !important; }
+    .btn-danger, .report-filters, #generateReportBtn,
+    .boot-overlay { display: none !important; }
     .page-container { padding: 0 !important; overflow: visible !important; }
     .page { display: flex !important; }
     .page:not(#pageReports) { display: none !important; }
@@ -319,6 +452,13 @@ async function loadMembersCache(force = false) {
   const now = Date.now();
   if (!force && STATE.members.length && (now - STATE.memberCacheTime) < CONFIG.CACHE_TTL_MS) return;
 
+  // Skeleton only on explicit force-reload — the initial load is
+  // covered by the boot overlay, so the grid behind it doesn't need one.
+  if (force) {
+    const grid = $('memberGrid');
+    if (grid) grid.innerHTML = skeletonMemberCards(6);
+  }
+
   try {
     const data = await apiFetch({ action: 'getMembers' });
     if (data.success && Array.isArray(data.data)) {
@@ -329,6 +469,13 @@ async function loadMembersCache(force = false) {
     }
   } catch (e) {
     console.warn('Member cache load failed:', e);
+    if (force) {
+      const grid = $('memberGrid');
+      if (grid) grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <p>Could not load members — check connection</p>
+      </div>`;
+    }
   }
 }
 
@@ -525,6 +672,12 @@ function hideUndoBar() {
 
 /* ── TODAY LOG ─────────────────────────────────────────────── */
 async function loadTodayLog() {
+  // Only show skeleton if the log is empty AND we're not already
+  // populated — the boot overlay covers the very first fetch anyway.
+  const list = $('logList');
+  const showSkeleton = list && !STATE.todayLog.length;
+  if (showSkeleton) list.innerHTML = skeletonLogItems(5);
+
   try {
     const data = await apiFetch({ action: 'getAttendance' });
     if (data.success && Array.isArray(data.data)) {
@@ -538,8 +691,12 @@ async function loadTodayLog() {
       }));
       renderLogList();
       renderCounters();
+    } else if (showSkeleton) {
+      renderLogList();
     }
-  } catch (e) { /* use optimistic local state */ }
+  } catch (e) {
+    if (showSkeleton) renderLogList();
+  }
 }
 
 function getFilteredLog() {
@@ -932,9 +1089,15 @@ function setupAnalyticsEvents() {
 }
 
 async function renderAnalytics() {
+  // Kick off loading indicators immediately so the user sees the
+  // page respond the moment they tap a range or open Analytics.
+  setChartLoading(true);
+  const lb = $('leaderboard');
+  if (lb) lb.innerHTML = skeletonLeaderboard(5);
+
   try {
     const data = await apiFetch({ action: 'getAnalytics', range: STATE.analyticsRange });
-    if (!data.success) return;
+    if (!data.success) { renderLeaderboard([]); return; }
 
     const d = data.data;
     renderKPIs(d);
@@ -946,6 +1109,9 @@ async function renderAnalytics() {
     renderLeaderboard(d.topMembers);
   } catch (e) {
     console.warn('Analytics load failed:', e);
+    renderLeaderboard([]);
+  } finally {
+    setChartLoading(false);
   }
 }
 
