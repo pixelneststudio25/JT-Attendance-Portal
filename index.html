@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>JT Attendance Portal</title>
+  
+  <!-- Primary meta -->
+  <meta name="description" content="Attendance, offering, and member management portal for Jesus Tribe Abuja church services.">
+  <meta name="theme-color" content="#e8621a">
+  
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="JT Attendance Portal">
+  <meta property="og:description" content="Attendance, offering, and member management portal for Jesus Tribe Abuja church services.">
+  <meta property="og:url" content="https://JT-Attendace.vercel.app/">
+  <meta property="og:image" content="https://JT-Attendace.vercel.app/jt-app.png">
+  <meta property="og:site_name" content="JT Attendance Portal">
+  
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="JT Attendance Portal">
+  <meta name="twitter:description" content="Attendance, offering, and member management portal for Jesus Tribe Abuja church services.">
+  <meta name="twitter:image" content="https://JT-Attendace.vercel.app/jt-app.png">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Favicons -->
+  <link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="favicon/favicon-48.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon/favicon-180.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon/favicon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon/favicon-512.png">
+  <link rel="manifest" href="site.webmanifest">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     PIN LOCK SCREEN
+════════════════════════════════════════════════════════════ -->
+<div id="pinOverlay" class="pin-overlay hidden">
+  <div class="pin-box">
+    <div class="pin-logo"><img src="jt.jpeg" alt="JT Logo" id="pinLogoImg"></div>
+    <h2 class="pin-title">Admin Access</h2>
+    <p class="pin-sub" id="pinSubText">Enter your PIN to continue</p>
+    <div class="pin-dots">
+      <span class="pin-dot" id="pd0"></span>
+      <span class="pin-dot" id="pd1"></span>
+      <span class="pin-dot" id="pd2"></span>
+      <span class="pin-dot" id="pd3"></span>
+    </div>
+    <div class="pin-grid">
+      <button class="pin-btn" data-val="1">1</button>
+      <button class="pin-btn" data-val="2">2</button>
+      <button class="pin-btn" data-val="3">3</button>
+      <button class="pin-btn" data-val="4">4</button>
+      <button class="pin-btn" data-val="5">5</button>
+      <button class="pin-btn" data-val="6">6</button>
+      <button class="pin-btn" data-val="7">7</button>
+      <button class="pin-btn" data-val="8">8</button>
+      <button class="pin-btn" data-val="9">9</button>
+      <button class="pin-btn pin-btn--empty"></button>
+      <button class="pin-btn" data-val="0">0</button>
+      <button class="pin-btn pin-btn--del" id="pinDel"><i class="fa-solid fa-delete-left"></i></button>
+    </div>
+    <p class="pin-setup-note hidden" id="pinSetupNote">First time? You're setting your PIN now.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     APP SHELL
+════════════════════════════════════════════════════════════ -->
+<div id="appShell" class="app-shell">
+
+  <!-- TOP HEADER -->
+  <header class="app-header">
+    <div class="header-left">
+      <img src="jt.jpeg" alt="JT" class="header-logo" id="headerLogoImg">
+      <div class="header-titles">
+        <span class="header-church">Jesus Tribe Abuja</span>
+        <span class="header-app" id="headerPageTitle">Attendance Desk</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="icon-btn" id="syncBtn" title="Sync offline queue">
+        <i class="fa-solid fa-rotate"></i>
+        <span class="sync-badge hidden" id="syncBadge">0</span>
+      </button>
+      <button class="icon-btn" id="settingsHeaderBtn" title="Settings">
+        <i class="fa-solid fa-gear"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- LIVE COUNTER STRIP -->
+  <div class="counter-strip" id="counterStrip">
+    <div class="counter-item">
+      <span class="counter-label">1st Service</span>
+      <span class="counter-val" id="cnt1st">0</span>
+    </div>
+    <div class="counter-divider"></div>
+    <div class="counter-item">
+      <span class="counter-label">2nd Service</span>
+      <span class="counter-val" id="cnt2nd">0</span>
+    </div>
+    <div class="counter-divider"></div>
+    <div class="counter-item">
+      <span class="counter-label">Combined</span>
+      <span class="counter-val" id="cntComb">0</span>
+    </div>
+    <div class="counter-divider"></div>
+    <div class="counter-item counter-item--total">
+      <span class="counter-label">Total</span>
+      <span class="counter-val" id="cntTotal">0</span>
+    </div>
+  </div>
+
+  <!-- PAGE CONTAINER -->
+  <main class="page-container" id="pageContainer">
+
+    <!-- ══════════════════════════════════════
+         PAGE 1: HOME — ATTENDANCE DESK
+    ══════════════════════════════════════ -->
+    <section class="page active" id="pageHome">
+
+      <!-- Mark Attendance Card -->
+      <div class="card" id="markCard">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fa-solid fa-user-check"></i> Mark Attendance</h2>
+        </div>
+        <div class="service-selector">
+          <button class="svc-btn active" data-service="First">1st Service</button>
+          <button class="svc-btn" data-service="Second">2nd Service</button>
+          <button class="svc-btn" data-service="Combined">Combined</button>
+        </div>
+        <div class="search-wrap">
+          <i class="fa-solid fa-magnifying-glass search-icon"></i>
+          <input type="text" id="searchInput" class="search-input" placeholder="Search by name or phone…" autocomplete="off">
+          <button class="search-clear hidden" id="searchClear"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="search-results" id="searchResults"></div>
+      </div>
+
+      <!-- Today's Attendance Log Card -->
+      <div class="card" id="logCard">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fa-solid fa-clipboard-list"></i> Today's Attendance</h2>
+          <div class="log-filters">
+            <button class="filter-btn active" data-filter="All">All</button>
+            <button class="filter-btn" data-filter="First">1st</button>
+            <button class="filter-btn" data-filter="Second">2nd</button>
+            <button class="filter-btn" data-filter="Combined">Comb.</button>
+          </div>
+        </div>
+        <div class="log-list" id="logList">
+          <div class="empty-state">
+            <i class="fa-solid fa-moon"></i>
+            <p>No attendance marked yet today</p>
+          </div>
+        </div>
+        <div class="log-pagination hidden" id="logPagination">
+          <button class="page-btn" id="logPrevBtn"><i class="fa-solid fa-chevron-left"></i></button>
+          <span id="logPageInfo">1 / 1</span>
+          <button class="page-btn" id="logNextBtn"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ══════════════════════════════════════
+         PAGE 2: MEMBERS
+    ══════════════════════════════════════ -->
+    <section class="page" id="pageMembers">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fa-solid fa-users"></i> Member Directory</h2>
+          <button class="btn-primary btn-sm" id="addMemberBtn"><i class="fa-solid fa-plus"></i> Add</button>
+        </div>
+        <div class="member-toolbar">
+          <div class="search-wrap">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="memberSearch" class="search-input" placeholder="Search members…" autocomplete="off">
+          </div>
+          <select class="sort-select" id="memberSort">
+            <option value="recent">Recently Joined</option>
+            <option value="az">A → Z</option>
+            <option value="za">Z → A</option>
+            <option value="attendance">Most Attended</option>
+          </select>
+          <select class="filter-select" id="memberGenderFilter">
+            <option value="all">All Genders</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </div>
+        <div class="member-stats-row" id="memberStatsRow">
+          <span class="stat-chip"><i class="fa-solid fa-users"></i> <b id="totalMembersCount">0</b> Total</span>
+          <span class="stat-chip male"><i class="fa-solid fa-mars"></i> <b id="maleCount">0</b> Male</span>
+          <span class="stat-chip female"><i class="fa-solid fa-venus"></i> <b id="femaleCount">0</b> Female</span>
+        </div>
+        <div class="member-grid" id="memberGrid">
+          <div class="empty-state">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <p>Loading members…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         PAGE 3: OFFERINGS
+    ══════════════════════════════════════ -->
+    <section class="page" id="pageOfferings">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fa-solid fa-hand-holding-heart"></i> Record Offering</h2>
+        </div>
+        <div class="offering-form" id="offeringForm">
+          <div class="form-group">
+            <label class="form-label">Service</label>
+            <div class="service-selector">
+              <button class="svc-btn active" data-service="First">1st Service</button>
+              <button class="svc-btn" data-service="Second">2nd Service</button>
+              <button class="svc-btn" data-service="Combined">Combined</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="offeringAmount">Amount (₦)</label>
+            <input type="number" id="offeringAmount" class="form-input" placeholder="e.g. 45000" min="0" step="100">
+          </div>
+          <button class="btn-primary btn-lg" id="submitOfferingBtn" onclick="submitOffering()">
+            <i class="fa-solid fa-paper-plane"></i> Record Offering
+          </button>
+        </div>
+        <div class="offering-history">
+          <h3 class="section-subtitle">Today's Offering Records</h3>
+          <div id="offeringHistory" class="offering-list">
+            <div class="empty-state">
+              <i class="fa-solid fa-coins"></i>
+              <p>No offerings recorded today</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         PAGE 4: ANALYTICS
+    ══════════════════════════════════════ -->
+    <section class="page" id="pageAnalytics">
+      <div class="analytics-header">
+        <h2 class="section-heading-playfair">Church Analytics</h2>
+        <select class="sort-select" id="analyticsRange">
+          <option value="all">All Time</option>
+          <option value="4w">Last 4 Weeks</option>
+          <option value="6w">Last 6 Weeks</option>
+          <option value="2m">Last 2 Months</option>
+          <option value="3m">Last 3 Months</option>
+          <option value="4m">Last 4 Months</option>
+          <option value="5m">Last 5 Months</option>
+          <option value="6m">Last 6 Months</option>
+        </select>
+      </div>
+
+      <div class="analytics-kpis" id="analyticsKpis">
+        <div class="kpi-card"><div class="kpi-val" id="kpiTotal">—</div><div class="kpi-label">Total Members</div></div>
+        <div class="kpi-card"><div class="kpi-val" id="kpiAvg">—</div><div class="kpi-label">Avg. Attendance</div></div>
+        <div class="kpi-card"><div class="kpi-val" id="kpiMale">—</div><div class="kpi-label">Male %</div></div>
+        <div class="kpi-card"><div class="kpi-val" id="kpiFemale">—</div><div class="kpi-label">Female %</div></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card-header"><h3>Attendance Trend</h3></div>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card-header"><h3>Offering Totals</h3></div>
+        <div class="chart-wrap"><canvas id="offerChart"></canvas></div>
+      </div>
+
+      <div class="chart-row">
+        <div class="chart-card chart-card--half">
+          <div class="chart-card-header"><h3>Gender Ratio</h3></div>
+          <div class="chart-wrap chart-wrap--donut"><canvas id="genderChart"></canvas></div>
+        </div>
+        <div class="chart-card chart-card--half">
+          <div class="chart-card-header"><h3>Avg. per Service</h3></div>
+          <div class="chart-wrap chart-wrap--donut"><canvas id="avgSvcChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card-header"><h3>Membership Growth</h3></div>
+        <div class="chart-wrap"><canvas id="growthChart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fa-solid fa-trophy"></i> Top 10 Consistent Members</h3>
+        </div>
+        <div class="leaderboard" id="leaderboard">
+          <div class="empty-state">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <p>Loading…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         PAGE 5: REPORTS
+    ══════════════════════════════════════ -->
+    <section class="page" id="pageReports">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fa-solid fa-file-lines"></i> Reports</h2>
+        </div>
+        <div class="report-filters">
+          <div class="form-group">
+            <label class="form-label">Period</label>
+            <div class="period-btns">
+              <button class="period-btn active" data-period="this-month">This Month</button>
+              <button class="period-btn" data-period="last-month">Last Month</button>
+              <button class="period-btn" data-period="2m">Last 2 Months</button>
+              <button class="period-btn" data-period="3m">Last 3 Months</button>
+              <button class="period-btn" data-period="6m">Last 6 Months</button>
+              <button class="period-btn" data-period="all">All Time</button>
+            </div>
+          </div>
+        </div>
+        <button class="btn-primary btn-lg" id="generateReportBtn" onclick="generateReport()">
+          <i class="fa-solid fa-chart-bar"></i> Generate Report
+        </button>
+      </div>
+
+      <div id="reportOutput" class="hidden">
+        <div class="card" id="reportSummaryCard">
+          <div class="card-header">
+            <h3 class="card-title"><i class="fa-solid fa-table"></i> Attendance Summary</h3>
+            <button class="btn-secondary btn-sm" onclick="downloadReportPDF()">
+              <i class="fa-solid fa-download"></i> PDF
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="report-table" id="reportTable">
+              <thead>
+                <tr>
+                  <th>Date</th><th>1st</th><th>2nd</th><th>Comb.</th><th>Total</th><th>Offering (₦)</th>
+                </tr>
+              </thead>
+              <tbody id="reportTableBody"></tbody>
+              <tfoot>
+                <tr class="report-totals">
+                  <td>TOTALS</td>
+                  <td id="rTot1">0</td>
+                  <td id="rTot2">0</td>
+                  <td id="rTotC">0</td>
+                  <td id="rTotT">0</td>
+                  <td id="rTotO">₦0</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">
+              <i class="fa-solid fa-person-walking-arrow-right"></i> Absentees
+              <span class="badge" id="absenteeBadge">0</span>
+            </h3>
+          </div>
+          <p class="helper-text">Members who attended the previous Sunday but were absent last Sunday.</p>
+          <div class="tag-list" id="absenteeList"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">
+              <i class="fa-solid fa-user-plus"></i> New Members
+              <span class="badge" id="newMemberBadge">0</span>
+            </h3>
+          </div>
+          <div class="tag-list" id="newMemberList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════
+         PAGE 6: SETTINGS
+    ══════════════════════════════════════ -->
+    <section class="page" id="pageSettings">
+      <div class="card">
+        <h2 class="card-title settings-title"><i class="fa-solid fa-sliders"></i> App Settings</h2>
+
+        <div class="settings-group">
+          <h3 class="settings-group-title">Security</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Change Admin PIN</span>
+              <span class="setting-desc">Update your 4-digit security PIN</span>
+            </div>
+            <button class="btn-secondary btn-sm" id="changePinBtn">Change PIN</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3 class="settings-group-title">Services</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Service Names</span>
+              <span class="setting-desc">Rename the three service slots</span>
+            </div>
+          </div>
+          <div class="service-names-config">
+            <div class="form-group">
+              <label class="form-label">Service 1</label>
+              <input type="text" class="form-input" id="svcName1" value="First">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Service 2</label>
+              <input type="text" class="form-input" id="svcName2" value="Second">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Service 3</label>
+              <input type="text" class="form-input" id="svcName3" value="Combined">
+            </div>
+            <button class="btn-primary btn-sm" onclick="saveServiceNames()">Save Names</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3 class="settings-group-title">Data &amp; Sync</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Backend URL</span>
+              <span class="setting-desc">Google Apps Script web app URL</span>
+            </div>
+            <button class="btn-secondary btn-sm" id="editUrlBtn">Edit</button>
+          </div>
+          <input type="url" class="form-input" id="backendUrlInput" readonly style="background:var(--bg-hover);color:var(--text-secondary);cursor:not-allowed;font-size:0.72rem;">
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Offline Queue</span>
+              <span class="setting-desc" id="queueStatus">0 records pending sync</span>
+            </div>
+            <button class="btn-secondary btn-sm" id="manualSyncBtn">Sync Now</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Clear Member Cache</span>
+              <span class="setting-desc">Force reload of member list from server</span>
+            </div>
+            <button class="btn-danger btn-sm" onclick="clearMemberCache()">Clear Cache</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Test Connection</span>
+              <span class="setting-desc" id="connStatus">Not tested</span>
+            </div>
+            <button class="btn-secondary btn-sm" onclick="testConnection()">Test</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3 class="settings-group-title">About</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">JT Attendance Portal</span>
+              <span class="setting-desc">Jesus Tribe Abuja — v2.3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- BOTTOM TAB BAR -->
+  <nav class="tab-bar" id="tabBar">
+    <button class="tab-item active" data-page="pageHome">
+      <i class="fa-solid fa-house"></i><span>Home</span>
+    </button>
+    <button class="tab-item" data-page="pageMembers">
+      <i class="fa-solid fa-users"></i><span>Members</span>
+    </button>
+    <button class="tab-item" data-page="pageOfferings">
+      <i class="fa-solid fa-hand-holding-heart"></i><span>Offerings</span>
+    </button>
+    <button class="tab-item" data-page="pageAnalytics">
+      <i class="fa-solid fa-chart-line"></i><span>Analytics</span>
+    </button>
+    <button class="tab-item" data-page="pageReports">
+      <i class="fa-solid fa-file-lines"></i><span>Reports</span>
+    </button>
+  </nav>
+
+</div><!-- /app-shell -->
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════════════════════ -->
+
+<!-- ── Add / Edit Member Modal ───────────────────────────────
+     UPGRADE: Form is now divided into three labelled clusters:
+     Identity (name + gender — the most important pair),
+     Contact (phone + email + address), and
+     Dates (DOB + date joined).
+     The name field has .form-input--hero for a larger, more
+     prominent appearance. Section dividers use .form-section-label.
+──────────────────────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="memberModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 class="modal-title" id="memberModalTitle">Add New Member</h3>
+      <button class="modal-close" onclick="closeMemberModal()">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <input type="hidden" id="editMemberId">
+
+      <!-- ── IDENTITY cluster ── -->
+      <div class="form-section-label"><span>Identity</span></div>
+
+      <!-- Full name — hero treatment: larger, more prominent -->
+      <div class="form-group">
+        <label class="form-label form-label--required" for="mName">Full Name</label>
+        <input type="text" class="form-input form-input--hero" id="mName"
+               placeholder="e.g. Emeka Okonkwo" autocomplete="off">
+      </div>
+
+      <!-- Gender sits right below the name, same cluster -->
+      <div class="form-group">
+        <label class="form-label" for="mGender">Gender</label>
+        <select class="form-input" id="mGender">
+          <option value="">Select gender…</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+        </select>
+      </div>
+
+      <!-- ── CONTACT cluster ── -->
+      <div class="form-section-label"><span>Contact</span></div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="mPhone">Phone</label>
+          <input type="tel" class="form-input" id="mPhone" placeholder="080xxxxxxxx">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="mParentPhone">Parent's Phone</label>
+          <input type="tel" class="form-input" id="mParentPhone" placeholder="080xxxxxxxx">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mEmail">Email</label>
+        <input type="email" class="form-input" id="mEmail" placeholder="email@example.com">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mAddress">Address</label>
+        <input type="text" class="form-input" id="mAddress" placeholder="Street, Area, City">
+      </div>
+
+      <!-- ── DATES cluster ── -->
+      <div class="form-section-label"><span>Dates</span></div>
+
+      <!-- DOB — three-select picker (populated by buildDobSelects() in script.js) -->
+      <div class="form-group">
+        <label class="form-label">Date of Birth</label>
+        <div class="dob-selects">
+          <select class="form-input" id="mDobDay"></select>
+          <select class="form-input" id="mDobMonth"></select>
+          <select class="form-input" id="mDobYear"></select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mDateJoined">Date Joined</label>
+        <input type="date" class="form-input" id="mDateJoined">
+      </div>
+
+    </div><!-- /modal-body -->
+
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeMemberModal()">Cancel</button>
+      <button class="btn-primary" id="saveMemberBtn" onclick="saveMember()">
+        <i class="fa-solid fa-floppy-disk"></i> Save Member
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Member Profile Modal -->
+<div class="modal-overlay hidden" id="profileModal">
+  <div class="modal modal--wide">
+    <div class="modal-header">
+      <h3 class="modal-title">Member Profile</h3>
+      <div class="modal-actions">
+        <button class="btn-secondary btn-sm" id="profileEditBtn"><i class="fa-solid fa-pen"></i> Edit</button>
+        <button class="btn-danger btn-sm" id="profileDeleteBtn"><i class="fa-solid fa-trash"></i> Delete</button>
+        <button class="modal-close" onclick="closeProfileModal()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+    <div class="modal-body" id="profileBody">
+      <!-- injected by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- Change PIN Modal -->
+<div class="modal-overlay hidden" id="pinChangeModal">
+  <div class="modal modal--narrow">
+    <div class="modal-header">
+      <h3 class="modal-title">Change PIN</h3>
+      <button class="modal-close" onclick="closePinChangeModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Current PIN</label>
+        <input type="password" maxlength="4" class="form-input" id="oldPin" placeholder="••••">
+      </div>
+      <div class="form-group">
+        <label class="form-label">New PIN</label>
+        <input type="password" maxlength="4" class="form-input" id="newPin" placeholder="••••">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Confirm New PIN</label>
+        <input type="password" maxlength="4" class="form-input" id="confirmPin" placeholder="••••">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closePinChangeModal()">Cancel</button>
+      <button class="btn-primary" onclick="changePIN()">Update PIN</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal-overlay hidden" id="deleteConfirmModal">
+  <div class="modal modal--narrow">
+    <div class="modal-header">
+      <h3 class="modal-title">Delete Member</h3>
+    </div>
+    <div class="modal-body">
+      <p class="modal-confirm-text">
+        Are you sure you want to remove <strong id="deleteConfirmName"></strong> from the directory?
+        This action is reversible in Google Sheets.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+      <button class="btn-danger" id="confirmDeleteBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Undo Bar -->
+<div class="undo-bar hidden" id="undoBar">
+  <span id="undoMsg">Attendance marked</span>
+  <button class="undo-btn" id="undoBtn">Undo</button>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
