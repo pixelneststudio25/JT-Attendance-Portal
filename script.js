@@ -98,7 +98,7 @@ function bootStart() {
   clearTimeout(BOOT.warmingTimer);
   BOOT.warmingTimer = setTimeout(() => {
     if (BOOT.hidden) return;
-    if (status) { status.textContent = 'Waking up the server…'; status.classList.add('warming'); }
+    if (status) { status.textContent = 'Loading up the server…'; status.classList.add('warming'); }
   }, 3000);
 
   setTimeout(() => {
