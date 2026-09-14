@@ -116,15 +116,6 @@ function setButtonLoading(btn, loading, loadingLabel) {
 }
 
 /* ── 3b. BOOT LOADER & SKELETON HELPERS ───────────────────── */
-const BOOT = {
-  tasks: 0,
-  done: 0,
-  startedAt: 0,
-  hidden: true,
-  warmingTimer: null,
-  minVisibleMs: 900,    // hold overlay briefly even on warm loads — avoids flicker
-  maxWaitMs: 20000,     // hard cap — never trap the user on a dead server
-};
 
 const BOOT = {
   tasks: 0,
