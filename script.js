@@ -126,11 +126,23 @@ const BOOT = {
   maxWaitMs: 20000,     // hard cap — never trap the user on a dead server
 };
 
+const BOOT = {
+  tasks: 0,
+  done: 0,
+  startedAt: 0,
+  hidden: true,
+  warmingTimer: null,
+  creepInterval: null,   // ADD THIS LINE
+  minVisibleMs: 900,
+  maxWaitMs: 20000,
+};
+
 function bootStart() {
   BOOT.tasks = 0;
   BOOT.done  = 0;
   BOOT.hidden = false;
   BOOT.startedAt = Date.now();
+  BOOT.creepPct = 6;
 
   const overlay = $('bootOverlay');
   if (!overlay) return;
@@ -143,7 +155,18 @@ function bootStart() {
     status.classList.remove('warming');
   }
   const bar = $('bootProgressBar');
-  if (bar) bar.style.width = '6%';
+  if (bar) bar.style.width = BOOT.creepPct + '%';
+
+  // FIX: with a single bootstrap call there's no real progress to report
+  // mid-flight, so the bar used to sit dead at 6% for the whole cold
+  // start then jump to 100%. This creeps it toward 85% so the wait
+  // reads as progress instead of looking stuck.
+  clearInterval(BOOT.creepInterval);
+  BOOT.creepInterval = setInterval(() => {
+    if (BOOT.hidden) { clearInterval(BOOT.creepInterval); return; }
+    BOOT.creepPct = Math.min(85, BOOT.creepPct + (85 - BOOT.creepPct) * 0.12);
+    if (bar) bar.style.width = BOOT.creepPct + '%';
+  }, 400);
 
   clearTimeout(BOOT.warmingTimer);
   BOOT.warmingTimer = setTimeout(() => {
@@ -159,22 +182,11 @@ function bootStart() {
   setTimeout(() => { if (!BOOT.hidden) bootFinish(true); }, BOOT.maxWaitMs);
 }
 
-function bootRegister() { BOOT.tasks++; }
-
-function bootComplete() {
-  BOOT.done++;
-  const pct = BOOT.tasks
-    ? Math.min(95, Math.round((BOOT.done / BOOT.tasks) * 100))
-    : 0;
-  const bar = $('bootProgressBar');
-  if (bar) bar.style.width = pct + '%';
-  if (BOOT.done >= BOOT.tasks && !BOOT.hidden) bootFinish(false);
-}
-
 function bootFinish(forced) {
   if (BOOT.hidden) return;
   BOOT.hidden = true;
   clearTimeout(BOOT.warmingTimer);
+  clearInterval(BOOT.creepInterval); // FIX: stop creeping once real data is in
 
   const bar = $('bootProgressBar');
   if (bar) bar.style.width = '100%';
