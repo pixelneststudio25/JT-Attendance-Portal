@@ -733,10 +733,8 @@ async function markAttendance(memberId) {
     await apiSubmit(payload);
     logEntry._pending = false;
     showToast(`${member.name} marked present`, 'success', `${service} Service · ${timeStr}`);
-  } catch (e) {
+   } catch (e) {
     if (e.type === 'app') {
-      // Server genuinely rejected this — revert the optimistic entry,
-      // it never actually saved.
       STATE.todayLog = STATE.todayLog.filter(l => l !== logEntry);
       hideUndoBar();
       renderLogList();
@@ -744,11 +742,10 @@ async function markAttendance(memberId) {
       runSearch($('searchInput').value.trim());
       showToast(e.message || `${member.name} could not be marked`, 'error');
     } else {
-      // Network/offline failure — apiSubmit already queued it; keep
-      // the optimistic entry so the attendance desk stays usable.
       showToast('Saved offline — will sync shortly', 'info');
     }
-}
+  }
+}   
 
 // FIX v2.5: undo now also distinguishes app-level vs network failures,
 // and shows a spinner on the undo button for the round-trip.
