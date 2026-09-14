@@ -172,6 +172,17 @@ function bootStart() {
 
   setTimeout(() => { if (!BOOT.hidden) bootFinish(true); }, BOOT.maxWaitMs);
 }
+function bootRegister() { BOOT.tasks++; }
+
+function bootComplete() {
+  BOOT.done++;
+  const pct = BOOT.tasks
+    ? Math.min(95, Math.round((BOOT.done / BOOT.tasks) * 100))
+    : 0;
+  const bar = $('bootProgressBar');
+  if (bar) bar.style.width = pct + '%';
+  if (BOOT.done >= BOOT.tasks && !BOOT.hidden) bootFinish(false);
+}
 
 function bootFinish(forced) {
   if (BOOT.hidden) return;
