@@ -1894,3 +1894,14 @@ select.form-input {
   letter-spacing: 0.01em;
   word-break: break-all;
 }
+
+.btn-loading { opacity: 0.85; cursor: wait; }
+
+.btn-primary:disabled,
+.btn-primary[disabled],
+.btn-danger:disabled,
+.btn-danger[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
