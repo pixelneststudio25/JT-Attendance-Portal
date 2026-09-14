@@ -1,20 +1,46 @@
 /* ================================================================
    JT ATTENDANCE PORTAL — script.js
-   Jesus Tribe Abuja — v2.4
-   Changes from v2.3:
+   Jesus Tribe Abuja — v2.5
+
+   v2.5 CHANGES:
+   - FIX: apiFetch/apiSubmit now throw a typed ApiError distinguishing
+     'network' failures (offline, HTTP error, bad JSON) from 'app'
+     failures (server responded but data.success === false, e.g.
+     DUPLICATE / MISSING_FIELDS / NOT_FOUND). This closes the original
+     silent-failure bug where a rejected request looked identical to
+     a successful one because only res.ok was ever checked.
+   - FIX: app-level failures are NEVER queued for offline retry —
+     retrying a DUPLICATE or NOT_FOUND will just fail again forever.
+     Only genuine network/offline failures get queued.
+   - ADDED: initApp() now fires a single 'bootstrap' call (members +
+     today's log + today's offerings in one response) instead of
+     three separate cold-start requests. Falls back to the old
+     three-call path if bootstrap itself fails. Boot overlay now
+     tracks exactly 1 task instead of 3.
+   - ADDED: cross-device polling — getAttendance + getTodayOfferings
+     refresh every ~17s while the tab is visible, plus an immediate
+     refresh on visibilitychange (tab refocus). Polling MERGES server
+     data with any locally-pending (unsynced/offline-queued) entries
+     instead of overwriting, so an in-flight mark doesn't flicker
+     away while waiting on its own network round-trip.
+   - ADDED: setButtonLoading() reusable spinner helper, wired into
+     every action button in the app (mark attendance, save member,
+     delete member, record offering, generate report, sync now,
+     test connection, change PIN, undo).
+
+   Changes from v2.3 → v2.4 (kept):
    - Premium boot overlay with animated progress during initial
      Apps Script cold-start fetch (~5–10s).
    - Skeleton loaders for member grid, log list, and analytics
      charts on subsequent refreshes.
    - 20s hard cap so a dead server never traps the user.
 
-   Changes from v2.2:
+   Changes from v2.2 → v2.3 (kept):
    - Backend URL is now HARDCODED (see CONFIG.WEB_APP_URL).
      The Settings screen no longer allows the user to change it.
    - Legacy localStorage key 'jt_backend_url' is purged on init.
-   - apiFetch error message points to source, not Settings.
 
-   Changes from v2.1:
+   Changes from v2.1 (kept):
    - DOB field replaced with 3-select picker (day/month/year)
    - Service switch re-runs search so mark-state refreshes
    - Offline queue deduplication (memberId + service + date)
@@ -35,6 +61,7 @@ const CONFIG = {
   UNDO_TIMEOUT_MS: 8000,
   DEBOUNCE_MS: 300,
   OFFLINE_SYNC_INTERVAL_MS: 30000,
+  POLLING_INTERVAL_MS: 17000, // FIX v2.5: cross-device refresh cadence (15–20s target)
 };
 
 /* ── 2. STATE ──────────────────────────────────────────────── */
@@ -59,11 +86,34 @@ const STATE = {
   lastMarked: null,
   offlineQueue: JSON.parse(localStorage.getItem('jt_offline_queue') || '[]'),
   syncIntervalId: null,
+  pollIntervalId: null, // FIX v2.5
 };
 
 /* ── 3. DOM HELPERS ────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
 const $$ = sel => document.querySelectorAll(sel);
+
+/* ── 3a. BUTTON LOADING HELPER (FIX v2.5) ─────────────────── */
+// Reusable spinner toggle for any action button. Stashes the button's
+// original innerHTML in a data attribute so it can be restored exactly,
+// regardless of icon/label content. Safe to call with a null/undefined
+// button (no-op) so callers don't need extra guards.
+function setButtonLoading(btn, loading, loadingLabel) {
+  if (!btn) return;
+  if (loading) {
+    if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${loadingLabel || 'Working…'}`;
+  } else {
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.origHtml !== undefined) {
+      btn.innerHTML = btn.dataset.origHtml;
+      delete btn.dataset.origHtml;
+    }
+  }
+}
 
 /* ── 3b. BOOT LOADER & SKELETON HELPERS ───────────────────── */
 const BOOT = {
@@ -281,20 +331,28 @@ function setChartLoading(on) {
 })();
 
 /* ── 5. CHANGE PIN ─────────────────────────────────────────── */
-function changePIN() {
+async function changePIN() {
   const old = $('oldPin').value.trim();
   const nw  = $('newPin').value.trim();
   const cf  = $('confirmPin').value.trim();
   const STORAGE_KEY = 'jt_pin_hash';
   function hash(p) { let h=0; for(let i=0;i<p.length;i++){h=(Math.imul(31,h)+p.charCodeAt(i))|0;} return String(h); }
 
-  if (old.length !== 4 || nw.length !== 4 || cf.length !== 4) return showToast('All fields require 4 digits', 'error');
-  if (hash(old) !== localStorage.getItem(STORAGE_KEY)) return showToast('Current PIN is incorrect', 'error');
-  if (nw !== cf) return showToast("New PINs don't match", 'error');
+  // FIX v2.5: spinner on the "Update PIN" button for the duration of validation
+  const btn = document.querySelector('#pinChangeModal .modal-footer .btn-primary');
+  setButtonLoading(btn, true, 'Updating…');
 
-  localStorage.setItem(STORAGE_KEY, hash(nw));
-  closePinChangeModal();
-  showToast('PIN updated successfully', 'success');
+  try {
+    if (old.length !== 4 || nw.length !== 4 || cf.length !== 4) return showToast('All fields require 4 digits', 'error');
+    if (hash(old) !== localStorage.getItem(STORAGE_KEY)) return showToast('Current PIN is incorrect', 'error');
+    if (nw !== cf) return showToast("New PINs don't match", 'error');
+
+    localStorage.setItem(STORAGE_KEY, hash(nw));
+    closePinChangeModal();
+    showToast('PIN updated successfully', 'success');
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 function closePinChangeModal() {
@@ -319,15 +377,59 @@ function initApp() {
   setupReportsEvents();
   setupSettingsEvents();
 
-  // Boot overlay: tracks the three initial parallel fetches.
+  // FIX v2.5: single bootstrap call replaces the old 3-way parallel fetch.
+  // Boot overlay now tracks exactly 1 task.
   bootStart();
-  bootRegister(); loadMembersCache().finally(bootComplete);
-  bootRegister(); loadTodayLog().finally(bootComplete);
-  bootRegister(); loadTodayOfferings().finally(bootComplete);
+  bootRegister();
+  loadBootstrap().finally(bootComplete);
 
   startOfflineSyncLoop();
+  startPolling();              // FIX v2.5: cross-device refresh
   updateSyncBadge();
   renderCounters();
+}
+
+/* ── 6a. BOOTSTRAP LOAD (FIX v2.5) ─────────────────────────── */
+// Single cold-start call replacing getMembers + getAttendance +
+// getTodayOfferings as three separate round-trips. Falls back to the
+// old three-call path if the bootstrap endpoint itself is unreachable,
+// so the app still loads (just slower) against an older backend.
+async function loadBootstrap() {
+  try {
+    const data = await apiFetch({ action: 'bootstrap' });
+    const payload = data.data || {};
+    const { members, log, offerings } = payload;
+
+    if (Array.isArray(members)) {
+      STATE.members = members;
+      STATE.memberCacheTime = Date.now();
+      renderMemberGrid();
+      updateMemberStats();
+    }
+
+    if (Array.isArray(log)) {
+      STATE.todayLog = log.map(r => ({
+        id: r.memberId,
+        name: r.memberName,
+        gender: r.gender,
+        service: r.service,
+        time: r.time,
+        isNew: r.isNew || false,
+      }));
+      renderLogList();
+      renderCounters();
+    }
+
+    if (Array.isArray(offerings)) {
+      STATE.todayOfferings = offerings;
+      renderOfferingHistory();
+    }
+  } catch (e) {
+    console.warn('Bootstrap load failed, falling back to individual calls:', e);
+    try {
+      await Promise.allSettled([loadMembersCache(true), loadTodayLog(), loadTodayOfferings()]);
+    } catch (e2) { /* individual calls already handle their own UI fallback */ }
+  }
 }
 
 /* ── 7. DOB SELECT BUILDER ─────────────────────────────────── */
@@ -461,7 +563,7 @@ async function loadMembersCache(force = false) {
 
   try {
     const data = await apiFetch({ action: 'getMembers' });
-    if (data.success && Array.isArray(data.data)) {
+    if (Array.isArray(data.data)) {
       STATE.members = data.data;
       STATE.memberCacheTime = Date.now();
       renderMemberGrid();
@@ -587,6 +689,11 @@ function buildResultCard(m) {
     </div>`;
 }
 
+// FIX v2.5: real error handling — network failures still queue offline
+// and keep the optimistic entry (unchanged UX); app-level rejections
+// (e.g. a genuine server-side duplicate) now REVERT the optimistic
+// entry and surface the real reason, instead of silently pretending
+// it worked.
 async function markAttendance(memberId) {
   const member = STATE.members.find(m => m.id == memberId);
   if (!member) return;
@@ -601,6 +708,9 @@ async function markAttendance(memberId) {
     return;
   }
 
+  const btn = document.querySelector(`.mark-btn[data-id="${memberId}"]`);
+  setButtonLoading(btn, true, '');
+
   const logEntry = {
     id: memberId,
     name: member.name,
@@ -608,54 +718,78 @@ async function markAttendance(memberId) {
     service,
     time: timeStr,
     isNew: isNewMemberToday(member),
+    _pending: true, // FIX v2.5: marks this as not-yet-confirmed by the server
   };
   STATE.todayLog.unshift(logEntry);
   STATE.lastMarked = { memberId, service, logIndex: 0 };
   renderLogList();
   renderCounters();
-  runSearch($('searchInput').value.trim());
+  runSearch($('searchInput').value.trim()); // re-render flips this button to "Marked" immediately
 
   showUndoBar(member.name, service);
 
   const payload = { action: 'markAttendance', memberId, memberName: member.name, service, date: today };
   try {
     await apiSubmit(payload);
+    logEntry._pending = false;
     showToast(`${member.name} marked present`, 'success', `${service} Service · ${timeStr}`);
   } catch (e) {
-    showToast('Saved offline — will sync shortly', 'info');
+    if (e.type === 'app') {
+      // Server genuinely rejected this — revert the optimistic entry,
+      // it never actually saved.
+      STATE.todayLog = STATE.todayLog.filter(l => l !== logEntry);
+      hideUndoBar();
+      renderLogList();
+      renderCounters();
+      runSearch($('searchInput').value.trim());
+      showToast(e.message || `${member.name} could not be marked`, 'error');
+    } else {
+      // Network/offline failure — apiSubmit already queued it; keep
+      // the optimistic entry so the attendance desk stays usable.
+      showToast('Saved offline — will sync shortly', 'info');
+    }
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 
-// FIX: Undo now waits for the server undo call and reverts the optimistic
-// removal if the server returns an error, instead of silently discarding it.
+// FIX v2.5: undo now also distinguishes app-level vs network failures,
+// and shows a spinner on the undo button for the round-trip.
 async function undoAttendance() {
   if (!STATE.lastMarked) return;
   const { memberId, service } = STATE.lastMarked;
+
+  const undoBtn = $('undoBtn');
+  setButtonLoading(undoBtn, true, 'Undoing…');
 
   // Optimistically remove from local state
   const removedEntry = STATE.todayLog.find(l => l.id == memberId && l.service === service);
   STATE.todayLog = STATE.todayLog.filter(l => !(l.id == memberId && l.service === service));
   clearTimeout(STATE.undoTimer);
-  hideUndoBar();
   renderLogList();
   renderCounters();
   runSearch($('searchInput').value.trim());
 
   try {
     await apiSubmit({ action: 'undoAttendance', memberId, service, date: formatDate(new Date()) });
+    hideUndoBar();
     showToast('Attendance undone', 'info');
   } catch (e) {
-    // Server undo failed — restore the entry so local state stays consistent
+    // Either a network failure or a genuine NOT_FOUND from the server —
+    // either way, restore the entry so local state stays consistent
+    // with what's actually confirmed.
     if (removedEntry) {
       STATE.todayLog.unshift(removedEntry);
       renderLogList();
       renderCounters();
       runSearch($('searchInput').value.trim());
     }
-    showToast('Undo failed — record remains on server', 'error');
+    hideUndoBar();
+    showToast(e.type === 'app' ? (e.message || 'Undo failed') : 'Undo failed — record remains on server', 'error');
+  } finally {
+    setButtonLoading(undoBtn, false);
+    STATE.lastMarked = null;
   }
-
-  STATE.lastMarked = null;
 }
 
 function showUndoBar(name, service) {
@@ -680,7 +814,7 @@ async function loadTodayLog() {
 
   try {
     const data = await apiFetch({ action: 'getAttendance' });
-    if (data.success && Array.isArray(data.data)) {
+    if (Array.isArray(data.data)) {
       STATE.todayLog = data.data.map(r => ({
         id: r.memberId,
         name: r.memberName,
@@ -697,6 +831,73 @@ async function loadTodayLog() {
   } catch (e) {
     if (showSkeleton) renderLogList();
   }
+}
+
+/* ── 11a. POLLING (FIX v2.5) ───────────────────────────────── */
+// Refreshes today's attendance log + offerings on an interval while the
+// tab is visible, plus immediately whenever the tab regains focus — so
+// a second device marking attendance shows up here without a manual
+// reload. Uses a MERGE strategy rather than overwrite: any locally
+// pending entry (an optimistic mark whose apiSubmit call is still in
+// flight, or one sitting in the offline queue) is preserved on top of
+// whatever the server returns, so it can't flicker away mid-sync.
+function startPolling() {
+  if (STATE.pollIntervalId) clearInterval(STATE.pollIntervalId);
+
+  STATE.pollIntervalId = setInterval(() => {
+    if (document.visibilityState === 'visible') pollTodayData();
+  }, CONFIG.POLLING_INTERVAL_MS);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pollTodayData();
+  });
+}
+
+async function pollTodayData() {
+  try {
+    const [logData, offerData] = await Promise.all([
+      apiFetch({ action: 'getAttendance' }),
+      apiFetch({ action: 'getTodayOfferings' }),
+    ]);
+
+    if (Array.isArray(logData.data))   mergeTodayLog(logData.data);
+    if (Array.isArray(offerData.data)) mergeTodayOfferings(offerData.data);
+  } catch (e) {
+    // Silent by design — a failed poll shouldn't interrupt the user.
+    // The offline queue + manual "Sync Now" remain the real fallback.
+  }
+}
+
+function mergeTodayLog(serverLog) {
+  const mapped = serverLog.map(r => ({
+    id: r.memberId,
+    name: r.memberName,
+    gender: r.gender,
+    service: r.service,
+    time: r.time,
+    isNew: r.isNew || false,
+  }));
+
+  // Keep any locally pending entry the server doesn't know about yet.
+  const pendingLocal = STATE.todayLog.filter(l =>
+    l._pending && !mapped.some(m => m.id == l.id && m.service === l.service)
+  );
+
+  STATE.todayLog = [...pendingLocal, ...mapped];
+  renderLogList();
+  renderCounters();
+  runSearch($('searchInput').value.trim());
+}
+
+function mergeTodayOfferings(serverOfferings) {
+  // Keep any offline-queued offering the server hasn't recorded yet.
+  // Rough de-dupe on service+amount since offerings have no client-side id.
+  const stillPending = STATE.todayOfferings.filter(p =>
+    p.offline && !serverOfferings.some(s => s.service === p.service && Number(s.amount) === Number(p.amount))
+  );
+
+  STATE.todayOfferings = [...serverOfferings, ...stillPending];
+  renderOfferingHistory();
 }
 
 function getFilteredLog() {
@@ -874,6 +1075,8 @@ function closeMemberModal() {
   $('memberModal').classList.add('hidden');
 }
 
+// FIX v2.5: uses setButtonLoading + distinguishes app-level rejection
+// (e.g. NOT_FOUND on edit) from a network failure in the toast wording.
 async function saveMember() {
   const id   = $('editMemberId').value;
   const name = $('mName').value.trim();
@@ -892,20 +1095,21 @@ async function saveMember() {
     dateJoined:  $('mDateJoined').value,
   };
 
-  $('saveMemberBtn').disabled = true;
+  const btn = $('saveMemberBtn');
+  setButtonLoading(btn, true, 'Saving…');
   try {
-    const res = await apiSubmit(memberData);
-    if (res.success) {
-      showToast(id ? 'Member updated' : 'Member added', 'success');
-      closeMemberModal();
-      await loadMembersCache(true);
-    } else {
-      showToast(res.message || 'Failed to save', 'error');
-    }
+    await apiSubmit(memberData);
+    showToast(id ? 'Member updated' : 'Member added', 'success');
+    closeMemberModal();
+    await loadMembersCache(true);
   } catch (e) {
-    showToast('Network error — please retry', 'error');
+    if (e.type === 'app') {
+      showToast(e.message || 'Failed to save', 'error');
+    } else {
+      showToast('Network error — please retry', 'error');
+    }
   } finally {
-    $('saveMemberBtn').disabled = false;
+    setButtonLoading(btn, false);
   }
 }
 
@@ -948,7 +1152,7 @@ async function openProfileModal(memberId) {
 
   try {
     const data = await apiFetch({ action: 'getMemberProfile', id: memberId });
-    if (data.success && data.data) {
+    if (data.data) {
       const p = data.data;
       if ($('ps-sundays'))  $('ps-sundays').textContent  = p.totalAttended ?? 0;
       if ($('ps-streak'))   $('ps-streak').textContent   = p.streak ?? 0;
@@ -993,21 +1197,22 @@ function closeDeleteModal() {
   _pendingDeleteId = null;
 }
 
+// FIX v2.5: spinner on the confirm button + app/network error distinction.
 async function executeSoftDelete() {
   if (!_pendingDeleteId) return;
+  const btn = $('confirmDeleteBtn');
+  setButtonLoading(btn, true, 'Deleting…');
   try {
-    const res = await apiSubmit({ action: 'softDeleteMember', id: _pendingDeleteId });
-    if (res.success) {
-      STATE.members = STATE.members.filter(m => m.id != _pendingDeleteId);
-      closeDeleteModal();
-      closeProfileModal();
-      renderMemberGrid();
-      showToast('Member removed from directory', 'success');
-    } else {
-      showToast(res.message || 'Delete failed', 'error');
-    }
+    await apiSubmit({ action: 'softDeleteMember', id: _pendingDeleteId });
+    STATE.members = STATE.members.filter(m => m.id != _pendingDeleteId);
+    closeDeleteModal();
+    closeProfileModal();
+    renderMemberGrid();
+    showToast('Member removed from directory', 'success');
   } catch (e) {
-    showToast('Network error', 'error');
+    showToast(e.type === 'app' ? (e.message || 'Delete failed') : 'Network error', 'error');
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 
@@ -1025,13 +1230,17 @@ function setupOfferingsEvents() {
 async function loadTodayOfferings() {
   try {
     const data = await apiFetch({ action: 'getTodayOfferings', date: formatDate(new Date()) });
-    if (data.success && Array.isArray(data.data)) {
+    if (Array.isArray(data.data)) {
       STATE.todayOfferings = data.data;
       renderOfferingHistory();
     }
   } catch (e) {}
 }
 
+// FIX v2.5: real error handling — network failure still queues offline
+// (unchanged UX with the "pending sync" tag); an app-level rejection
+// (e.g. INVALID_AMOUNT slipping past the client check) reverts nothing
+// optimistic since nothing was added yet, and just surfaces the reason.
 async function submitOffering() {
   const amount = parseFloat($('offeringAmount').value);
   if (!amount || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
@@ -1040,28 +1249,28 @@ async function submitOffering() {
   const date    = formatDate(new Date());
   const btn     = $('submitOfferingBtn');
 
-  btn.disabled = true;
+  setButtonLoading(btn, true, 'Recording…');
   try {
-    const res = await apiSubmit({ action: 'recordOffering', service, amount, date });
-    if (res.success) {
-      STATE.todayOfferings.push({
-        service, amount,
-        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-      });
-      renderOfferingHistory();
-      $('offeringAmount').value = '';
-      showToast(`₦${amount.toLocaleString()} recorded for ${service} service`, 'success');
-    } else {
-      showToast(res.message || 'Failed to record', 'error');
-    }
-  } catch (e) {
-    showToast('Saved offline — will sync', 'info');
-    STATE.todayOfferings.push({ service, amount, time: '--:--', offline: true });
+    await apiSubmit({ action: 'recordOffering', service, amount, date });
+    STATE.todayOfferings.push({
+      service, amount,
+      time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+    });
     renderOfferingHistory();
     $('offeringAmount').value = '';
-    enqueueOffline({ action: 'recordOffering', service, amount, date });
+    showToast(`₦${amount.toLocaleString()} recorded for ${service} service`, 'success');
+  } catch (e) {
+    if (e.type === 'app') {
+      showToast(e.message || 'Failed to record offering', 'error');
+    } else {
+      showToast('Saved offline — will sync', 'info');
+      STATE.todayOfferings.push({ service, amount, time: '--:--', offline: true });
+      renderOfferingHistory();
+      $('offeringAmount').value = '';
+      // Already enqueued inside apiSubmit for network failures.
+    }
   } finally {
-    btn.disabled = false;
+    setButtonLoading(btn, false);
   }
 }
 
@@ -1097,8 +1306,6 @@ async function renderAnalytics() {
 
   try {
     const data = await apiFetch({ action: 'getAnalytics', range: STATE.analyticsRange });
-    if (!data.success) { renderLeaderboard([]); return; }
-
     const d = data.data;
     renderKPIs(d);
     renderTrendChart(d.trendLabels, d.trendData);
@@ -1301,21 +1508,20 @@ function setupReportsEvents() {
   });
 }
 
+// FIX v2.5: uses the shared setButtonLoading helper instead of its own
+// manual innerHTML swap, and surfaces app-level report failures cleanly.
 async function generateReport() {
   const btn = $('generateReportBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating…';
+  setButtonLoading(btn, true, 'Generating…');
 
   try {
     const data = await apiFetch({ action: 'generateReport', period: STATE.reportPeriod });
-    if (!data.success) throw new Error(data.message);
     renderReport(data.data);
     $('reportOutput').classList.remove('hidden');
   } catch (e) {
     showToast('Failed to generate report: ' + (e.message || ''), 'error');
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-chart-bar"></i> Generate Report';
+    setButtonLoading(btn, false);
   }
 }
 
@@ -1407,20 +1613,21 @@ function saveServiceNames() {
   });
 }
 
+// FIX v2.5: spinner on the Test button for the round-trip.
 async function testConnection() {
   const status = $('connStatus');
+  const btn = document.querySelector('button[onclick="testConnection()"]');
+  setButtonLoading(btn, true, 'Testing…');
   status.textContent = 'Testing…';
   try {
     const data = await apiFetch({ action: 'ping' });
-    if (data.success) {
-      status.textContent = '✓ Connected — ' + new Date().toLocaleTimeString();
-      showToast('Backend connection successful', 'success');
-    } else {
-      status.textContent = '✗ Connected but error returned';
-    }
+    status.textContent = '✓ Connected — ' + new Date().toLocaleTimeString();
+    showToast('Backend connection successful', 'success');
   } catch (e) {
-    status.textContent = '✗ Could not reach backend';
+    status.textContent = e.type === 'app' ? '✗ Connected but error returned' : '✗ Could not reach backend';
     showToast('Connection failed — check deployment access in Apps Script', 'error');
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 
@@ -1460,13 +1667,18 @@ function updateSyncBadge() {
     : 'All synced';
 }
 
+// FIX v2.5: uses setButtonLoading; app-level failures during sync (e.g.
+// a queued markAttendance that's now a genuine DUPLICATE because it
+// synced from another device in the meantime) are DROPPED from the
+// queue instead of retried forever, since retrying can't fix them.
 async function flushOfflineQueue() {
   if (!STATE.offlineQueue.length) { showToast('Nothing to sync', 'info'); return; }
   if (!CONFIG.WEB_APP_URL) { showToast('Backend URL is not configured in script.js', 'error'); return; }
 
   const btn = $('manualSyncBtn');
-  btn.disabled = true;
+  setButtonLoading(btn, true, 'Syncing…');
   let synced = 0;
+  let dropped = 0;
 
   for (const payload of [...STATE.offlineQueue]) {
     try {
@@ -1474,17 +1686,24 @@ async function flushOfflineQueue() {
       STATE.offlineQueue = STATE.offlineQueue.filter(q => q !== payload);
       synced++;
     } catch (e) {
-      // Leave failed items in the queue for next sync attempt
+      if (e.type === 'app') {
+        // Retrying won't change the outcome — drop it rather than
+        // retry forever every sync cycle.
+        STATE.offlineQueue = STATE.offlineQueue.filter(q => q !== payload);
+        dropped++;
+      }
+      // Network failures: leave in queue for next sync attempt.
     }
   }
 
   const remaining = STATE.offlineQueue.length;
   persistQueue();
   updateSyncBadge();
-  btn.disabled = false;
+  setButtonLoading(btn, false);
 
-  if (synced > 0)      showToast(`${synced} record${synced > 1 ? 's' : ''} synced`, 'success');
-  if (remaining > 0)   showToast(`${remaining} record${remaining > 1 ? 's' : ''} failed to sync`, 'error');
+  if (synced > 0)    showToast(`${synced} record${synced > 1 ? 's' : ''} synced`, 'success');
+  if (dropped > 0)   showToast(`${dropped} record${dropped > 1 ? 's' : ''} rejected by server and dropped`, 'error');
+  if (remaining > 0) showToast(`${remaining} record${remaining > 1 ? 's' : ''} still pending — will retry`, 'info');
 }
 
 function startOfflineSyncLoop() {
@@ -1501,37 +1720,94 @@ function startOfflineSyncLoop() {
   });
 }
 
-/* ── 18. API LAYER ────────────────────────────────────────── */
+/* ── 18. API LAYER (FIX v2.5) ─────────────────────────────── */
+// Typed error so callers can tell "the network/server didn't respond
+// properly" apart from "the server responded and said no". This is
+// the fix for the original silent-failure bug: previously only
+// res.ok (HTTP status) was checked, so a well-formed
+// {success:false, code:'DUPLICATE', ...} response — a real rejection —
+// was treated as success by every caller.
+class ApiError extends Error {
+  constructor(message, { type = 'network', code = null } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.type = type; // 'network' | 'app'
+    this.code = code; // e.g. 'DUPLICATE', 'MISSING_FIELDS', 'NOT_FOUND'
+  }
+}
+
 async function apiFetch(params) {
   const url = CONFIG.WEB_APP_URL;
-  if (!url) throw new Error('Backend URL is not configured in script.js');
+  if (!url) throw new ApiError('Backend URL is not configured in script.js', { type: 'network' });
 
-  const qs  = new URLSearchParams(params).toString();
-  const res = await fetch(`${url}?${qs}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const qs = new URLSearchParams(params).toString();
+  let res;
+  try {
+    res = await fetch(`${url}?${qs}`);
+  } catch (e) {
+    throw new ApiError('Network request failed', { type: 'network' });
+  }
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, { type: 'network' });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw new ApiError('Invalid server response', { type: 'network' });
+  }
+
+  if (data && data.success === false) {
+    throw new ApiError(data.message || 'Server rejected the request', { type: 'app', code: data.code });
+  }
+
+  return data;
 }
 
 async function apiSubmit(payload) {
   const url = CONFIG.WEB_APP_URL;
   if (!url) {
     enqueueOffline(payload);
-    throw new Error('Backend URL is not configured in script.js');
+    throw new ApiError('Backend URL is not configured in script.js', { type: 'network' });
   }
 
   if (!navigator.onLine) {
     enqueueOffline(payload);
-    throw new Error('Offline — queued');
+    throw new ApiError('Offline — queued', { type: 'network' });
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(payload),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    enqueueOffline(payload);
+    throw new ApiError('Network request failed — queued', { type: 'network' });
+  }
 
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  if (!res.ok) {
+    enqueueOffline(payload);
+    throw new ApiError(`HTTP ${res.status} — queued`, { type: 'network' });
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    enqueueOffline(payload);
+    throw new ApiError('Invalid server response — queued', { type: 'network' });
+  }
+
+  if (data && data.success === false) {
+    // FIX: app-level rejection — DO NOT enqueue for offline retry.
+    // Retrying a DUPLICATE/MISSING_FIELDS/NOT_FOUND will just fail
+    // again every sync cycle forever.
+    throw new ApiError(data.message || 'Server rejected the request', { type: 'app', code: data.code });
+  }
+
+  return data;
 }
 
 /* ── 19. TOAST SYSTEM ─────────────────────────────────────── */
