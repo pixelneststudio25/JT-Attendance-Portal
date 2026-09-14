@@ -708,9 +708,6 @@ async function markAttendance(memberId) {
     return;
   }
 
-  const btn = document.querySelector(`.mark-btn[data-id="${memberId}"]`);
-  setButtonLoading(btn, true, '');
-
   const logEntry = {
     id: memberId,
     name: member.name,
@@ -748,9 +745,6 @@ async function markAttendance(memberId) {
       // the optimistic entry so the attendance desk stays usable.
       showToast('Saved offline — will sync shortly', 'info');
     }
-  } finally {
-    setButtonLoading(btn, false);
-  }
 }
 
 // FIX v2.5: undo now also distinguishes app-level vs network failures,
